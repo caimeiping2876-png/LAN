@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>骨折诊断系统 - 本地版本</title>
+<style>
+body{margin:0;padding:20px;font-family:Arial,sans-serif;background:#0a0a0a;color:#fff;overflow-x:hidden}
+.container{max-width:900px;margin:0 auto;background:#1a1a1a;padding:30px;border-radius:10px}
+h1{text-align:center;color:#22d3b0}
+.upload-area{border:2px dashed #22d3b0;padding:30px;text-align:center;cursor:pointer;border-radius:10px;margin:20px 0}
+.upload-area:hover{background:#222}
+canvas{max-width:100%;border:1px solid #22d3b0;border-radius:5px;margin:20px 0}
+button{padding:10px 20px;background:#22d3b0;color:#000;border:none;border-radius:5px;cursor:pointer;font-weight:bold;width:100%}
+button:hover{opacity:0.8}
+.result{display:none;background:#222;padding:20px;border-radius:10px;margin:20px 0}
+.result.show{display:block}
+.result-type{font-size:24px;color:#22d3b0;margin:10px 0}
+.confidence{margin:10px 0}
+.top5{margin:20px 0}
+.top5-item{padding:10px;background:#2a2a2a;margin:5px 0;border-left:3px solid #22d3b0}
+.description{margin:20px 0;padding:15px;background:#2a2a2a;border-left:3px solid #22d3b0}
+</style>
+</head>
+<body>
+
+<div class="container">
+<h1>🦴 骨折诊断系统（本地版本）</h1>
+
+<div class="upload-area" id="uploadArea">
+  <p>点击或拖拽上传X光图片</p>
+  <input type="file" id="fileInput" accept="image/*" style="display:none">
+</div>
+
+<canvas id="canvas"></canvas>
+
+<button onclick="analyze()" id="analyzeBtn" disabled>🔍 开始分析（本地模拟）</button>
+
+<div class="result" id="result">
+  <div class="result-type" id="resultType"></div>
+  <div class="confidence">置信度: <span id="confidence"></span></div>
+  <div class="top5" id="top5"></div>
+  <div class="description" id="description"></div>
+</div>
+
+</div>
+
+<script>
+// 模拟数据 - 10种骨折类型
+const FRACTURES = {
+  "Avulsion fracture":"撕脱骨折：肌腱或韧带从骨骼附着点撕拉。常见于运动损伤。",
+  "Comminuted fracture":"粉碎性骨折：骨骼碎裂成多块。由高能量创伤引起。",
+  "Fracture Dislocation":"骨折脱位：骨折同时伴有关节脱位。需要综合治疗。",
+  "Greenstick fracture":"青枝骨折：骨骼一侧弯曲但未完全断裂。常见于儿童。",
+  "Hairline Fracture":"应力性骨折：骨骼出现细微裂纹。常见于过度使用。",
+  "Impacted fracture":"嵌插骨折：骨折端相互嵌插。常见于脊椎骨折。",
+  "Longitudinal fracture":"纵向骨折：骨折线沿骨骼长轴延伸。",
+  "Oblique fracture":"斜形骨折：骨折线与长轴呈斜角。由扭转力引起。",
+  "Pathological fracture":"病理性骨折：由骨骼疾病引起。轻微外力即可导致。",
+  "Spiral Fracture":"螺旋形骨折：骨折线呈螺旋状。由扭转力引起。"
+};
+
+const MOCK_DATA = {
+  "Avulsion fracture":{conf:0.68,top5:[{n:"Avulsion fracture",p:68},{n:"Oblique fracture",p:15},{n:"Hairline Fracture",p:08},{n:"Longitudinal fracture",p:05},{n:"Greenstick fracture",p:04}],bbox:{x:0.3,y:0.2,w:0.4,h:0.6}},
+  "Comminuted fracture":{conf:0.74,top5:[{n:"Comminuted fracture",p:74},{n:"Impacted fracture",p:12},{n:"Fracture Dislocation",p:08},{n:"Spiral Fracture",p:04},{n:"Oblique fracture",p:02}],bbox:{x:0.25,y:0.15,w:0.5,h:0.7}},
+  "Fracture Dislocation":{conf:0.71,top5:[{n:"Fracture Dislocation",p:71},{n:"Comminuted fracture",p:13},{n:"Avulsion fracture",p:09},{n:"Impacted fracture",p:05},{n:"Pathological fracture",p:02}],bbox:{x:0.2,y:0.25,w:0.6,h:0.5}},
+  "Greenstick fracture":{conf:0.82,top5:[{n:"Greenstick fracture",p:82},{n:"Longitudinal fracture",p:10},{n:"Hairline Fracture",p:05},{n:"Oblique fracture",p:02},{n:"Avulsion fracture",p:01}],bbox:{x:0.35,y:0.3,w:0.3,h:0.4}},
+  "Hairline Fracture":{conf:0.52,top5:[{n:"Hairline Fracture",p:52},{n:"Longitudinal fracture",p:25},{n:"Oblique fracture",p:15},{n:"Avulsion fracture",p:05},{n:"Greenstick fracture",p:03}],bbox:{x:0.4,y:0.35,w:0.2,h:0.3}},
+  "Impacted fracture":{conf:0.63,top5:[{n:"Impacted fracture",p:63},{n:"Comminuted fracture",p:18},{n:"Fracture Dislocation",p:10},{n:"Spiral Fracture",p:06},{n:"Oblique fracture",p:03}],bbox:{x:0.3,y:0.25,w:0.4,h:0.5}},
+  "Longitudinal fracture":{conf:0.59,top5:[{n:"Longitudinal fracture",p:59},{n:"Oblique fracture",p:20},{n:"Hairline Fracture",p:12},{n:"Greenstick fracture",p:06},{n:"Avulsion fracture",p:03}],bbox:{x:0.35,y:0.2,w:0.3,h:0.6}},
+  "Oblique fracture":{conf:0.61,top5:[{n:"Oblique fracture",p:61},{n:"Longitudinal fracture",p:18},{n:"Avulsion fracture",p:12},{n:"Hairline Fracture",p:06},{n:"Greenstick fracture",p:03}],bbox:{x:0.3,y:0.3,w:0.4,h:0.4}},
+  "Pathological fracture":{conf:0.76,top5:[{n:"Pathological fracture",p:76},{n:"Comminuted fracture",p:12},{n:"Impacted fracture",p:07},{n:"Avulsion fracture",p:03},{n:"Spiral Fracture",p:02}],bbox:{x:0.25,y:0.2,w:0.5,h:0.6}},
+  "Spiral Fracture":{conf:0.64,top5:[{n:"Spiral Fracture",p:64},{n:"Comminuted fracture",p:16},{n:"Impacted fracture",p:10},{n:"Oblique fracture",p:07},{n:"Fracture Dislocation",p:03}],bbox:{x:0.32,y:0.25,w:0.36,h:0.5}}
+};
+
+const types = Object.keys(FRACTURES);
+let currentImg = null;
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const fileInput = document.getElementById('fileInput');
+const uploadArea = document.getElementById('uploadArea');
+
+// 点击上传
+uploadArea.onclick = ()=>fileInput.click();
+fileInput.onchange = e=>{
+  if(e.target.files[0]){
+    const reader = new FileReader();
+    reader.onload = ev=>{
+      const img = new Image();
+      img.onload = ()=>{
+        currentImg = img;
+        canvas.width = 500;
+        canvas.height = 400;
+        ctx.drawImage(img,0,0,500,400);
+        document.getElementById('analyzeBtn').disabled = false;
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(e.target.files[0]);
+  }
+};
+
+// 拖拽上传
+uploadArea.ondragover = e=>e.preventDefault();
+uploadArea.ondrop = e=>{
+  e.preventDefault();
+  if(e.dataTransfer.files[0]){
+    fileInput.files = e.dataTransfer.files;
+    fileInput.dispatchEvent(new Event('change'));
+  }
+};
+
+// 分析（本地模拟）
+function analyze(){
+  if(!currentImg) return;
+  
+  // 随机选择一种骨折类型
+  const selected = types[Math.floor(Math.random()*types.length)];
+  const data = MOCK_DATA[selected];
+  
+  // 延迟3秒模拟分析
+  document.getElementById('analyzeBtn').disabled = true;
+  setTimeout(()=>{
+    // 重新绘制原图
+    ctx.drawImage(currentImg, 0, 0, 500, 400);
+    
+    // 绘制边界框
+    const bbox = data.bbox;
+    const x = bbox.x * 500;
+    const y = bbox.y * 400;
+    const w = bbox.w * 500;
+    const h = bbox.h * 400;
+    
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, w, h);
+    
+    // 显示结果
+    document.getElementById('resultType').textContent = selected;
+    document.getElementById('confidence').textContent = (data.conf*100).toFixed(1) + '%';
+    
+    let html = '';
+    data.top5.forEach((item,i)=>{
+      html += `<div class="top5-item">${i+1}. ${item.n} - ${item.p}%</div>`;
+    });
+    document.getElementById('top5').innerHTML = html;
+    
+    document.getElementById('description').textContent = FRACTURES[selected];
+    
+    document.getElementById('result').classList.add('show');
+    document.getElementById('analyzeBtn').disabled = false;
+  }, 3000);
+}
+</script>
+
+</body>
+</html>
